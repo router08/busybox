@@ -109,6 +109,7 @@
 //usage:     "\n	-i		Inetd mode"
 //usage:	IF_FEATURE_TELNETD_INETD_WAIT(
 //usage:     "\n	-w SEC		Inetd 'wait' mode, linger time SEC"
+//usage:     "\n		inetd.conf line: 23 stream tcp wait root telnetd telnetd -w10"
 //usage:     "\n	-S		Log to syslog (implied by -i or without -F and -w)"
 //usage:	)
 //usage:	)
@@ -495,7 +496,7 @@ make_new_session(
 		free(ts);
 		close(fd);
 		/* sock will be closed by caller */
-		bb_perror_msg("vfork");
+		bb_simple_perror_msg("vfork");
 		return NULL;
 	}
 	if (pid > 0) {

@@ -9,7 +9,6 @@
 //config:config LOSETUP
 //config:	bool "losetup (5.5 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	losetup is used to associate or detach a loop device with a regular
 //config:	file or block device, and to query the status of a loop device. This
@@ -118,13 +117,13 @@ int losetup_main(int argc UNUSED_PARAM, char **argv)
 
 		n = get_free_loop();
 		if (n == -1)
-			bb_error_msg_and_die("no free loop devices");
+			bb_simple_error_msg_and_die("no free loop devices");
 		if (n < 0) /* n == -2: no /dev/loop-control, use legacy method */
 			n = 0;
 		/* or: n >= 0: the number of next free loopdev, just verify it */
 		do {
 			if (n > MAX_LOOP_NUM)
-				bb_error_msg_and_die("no free loop devices");
+				bb_simple_error_msg_and_die("no free loop devices");
 			sprintf(dev, LOOP_FORMAT, n++);
 			s = query_loop(dev);
 			free(s);
@@ -151,7 +150,7 @@ int losetup_main(int argc UNUSED_PARAM, char **argv)
 			if (opt & OPT_P) {
 				flags |= BB_LO_FLAGS_PARTSCAN;
 			}
-			if (set_loop(&d, argv[0], offset, flags) < 0)
+			if (set_loop(&d, argv[0], offset, 0, flags) < 0)
 				bb_simple_perror_msg_and_die(argv[0]);
 			return EXIT_SUCCESS;
 		}

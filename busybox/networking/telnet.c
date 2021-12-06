@@ -238,6 +238,18 @@ static void handle_net_output(int len)
 			*dst = '\r'; /* Enter -> CR LF */
 			*++dst = '\n';
 		}
+#if 0
+/* putty's "special commands" mode does this: */
+/* Korenix 3005 switch needs at least the backspace tweak */
+		if (c == 0x08 || c == 0x7f) { /* ctrl+h || backspace */
+			*dst = IAC;
+			*++dst = EC;
+		}
+		if (c == 0x03) { /* ctrl+c */
+			*dst = IAC;
+			*++dst = IP;
+		}
+#endif
 		dst++;
 	}
 	if (dst - outbuf != 0)
@@ -356,12 +368,16 @@ static void put_iac2_msb_lsb(unsigned x_y)
 }
 #define put_iac2_x_y(x,y) put_iac2_msb_lsb(((x)<<8) + (y))
 
+#if ENABLE_FEATURE_TELNET_WIDTH \
+ || ENABLE_FEATURE_TELNET_TTYPE \
+ || ENABLE_FEATURE_TELNET_AUTOLOGIN
 static void put_iac4_msb_lsb(unsigned x_y_z_t)
 {
 	put_iac2_msb_lsb(x_y_z_t >> 16);
 	put_iac2_msb_lsb(x_y_z_t);  /* "... & 0xffff" is implicit */
 }
 #define put_iac4_x_y_z_t(x,y,z,t) put_iac4_msb_lsb(((x)<<24) + ((y)<<16) + ((z)<<8) + (t))
+#endif
 
 static void put_iac3_IAC_x_y_merged(unsigned wwdd_and_c)
 {
@@ -661,7 +677,7 @@ int telnet_main(int argc UNUSED_PARAM, char **argv)
 			if (bb_got_signal)
 				con_escape();
 			else
-				sleep(1);
+				sleep1();
 			continue;
 		}
 

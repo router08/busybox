@@ -31,7 +31,6 @@
 //config:	bool "Enable display of filesystem status (-f)"
 //config:	default y
 //config:	depends on STAT
-//config:	select PLATFORM_LINUX # statfs()
 //config:	help
 //config:	Without this, stat will not support the '-f' option to display
 //config:	information about filesystem status.
@@ -41,7 +40,7 @@
 //kbuild:lib-$(CONFIG_STAT) += stat.o
 
 //usage:#define stat_trivial_usage
-//usage:       "[OPTIONS] FILE..."
+//usage:       "[-lt"IF_FEATURE_STAT_FILESYSTEM("f")"] "IF_FEATURE_STAT_FORMAT("[-c FMT] ")"FILE..."
 //usage:#define stat_full_usage "\n\n"
 //usage:       "Display file"
 //usage:            IF_FEATURE_STAT_FILESYSTEM(" (default) or filesystem")
@@ -150,20 +149,16 @@ static const char *file_type(const struct stat *st)
 	return "weird file";
 }
 
-static const char *human_time(time_t t)
+static const char *human_time(struct timespec *ts)
 {
-	/* Old
-	static char *str;
-	str = ctime(&t);
-	str[strlen(str)-1] = '\0';
-	return str;
-	*/
-	/* coreutils 6.3 compat: */
+	char fmt[sizeof("%Y-%m-%d %H:%M:%S.123456789 %z") + /*paranoia*/ 8];
 
-	/*static char buf[sizeof("YYYY-MM-DD HH:MM:SS.000000000")] ALIGN1;*/
+	/* coreutils 6.3 compat */
 #define buf bb_common_bufsiz1
 	setup_common_bufsiz();
-	strcpy(strftime_YYYYMMDDHHMMSS(buf, COMMON_BUFSIZE, &t), ".000000000");
+
+	sprintf(stpcpy(fmt, "%Y-%m-%d %H:%M:%S"), ".%09u %%z", (unsigned)ts->tv_nsec);
+	strftime(buf, COMMON_BUFSIZE, fmt, localtime(&ts->tv_sec));
 	return buf;
 #undef buf
 }
@@ -213,7 +208,7 @@ FS_TYPE(0x62656572, "sysfs")
 static const char *human_fstype(uint32_t f_type)
 {
 # define FS_TYPE(type, name) type,
-	static const uint32_t fstype[] = {
+	static const uint32_t fstype[] ALIGN4 = {
 		FS_TYPE_LIST
 	};
 # undef FS_TYPE
@@ -384,19 +379,19 @@ static void FAST_FUNC print_stat(char *pformat, const char m,
 		strcat(pformat, "lu");
 		printf(pformat, (unsigned long) statbuf->st_blksize);
 	} else if (m == 'x') {
-		printfs(pformat, human_time(statbuf->st_atime));
+		printfs(pformat, human_time(&statbuf->st_atim));
 	} else if (m == 'X') {
 		strcat(pformat, TYPE_SIGNED(time_t) ? "ld" : "lu");
 		/* note: (unsigned long) would be wrong:
 		 * imagine (unsigned long64)int32 */
 		printf(pformat, (long) statbuf->st_atime);
 	} else if (m == 'y') {
-		printfs(pformat, human_time(statbuf->st_mtime));
+		printfs(pformat, human_time(&statbuf->st_mtim));
 	} else if (m == 'Y') {
 		strcat(pformat, TYPE_SIGNED(time_t) ? "ld" : "lu");
 		printf(pformat, (long) statbuf->st_mtime);
 	} else if (m == 'z') {
-		printfs(pformat, human_time(statbuf->st_ctime));
+		printfs(pformat, human_time(&statbuf->st_ctim));
 	} else if (m == 'Z') {
 		strcat(pformat, TYPE_SIGNED(time_t) ? "ld" : "lu");
 		printf(pformat, (long) statbuf->st_ctime);
@@ -444,7 +439,7 @@ static void print_it(const char *masterformat,
 
 		/* print preceding string */
 		*p = '\0';
-		fputs(b, stdout);
+		fputs_stdout(b);
 
 		p += len;
 		b = p + 1;
@@ -501,7 +496,7 @@ static bool do_statfs(const char *filename, const char *format)
 	if (format == NULL) {
 # if !ENABLE_SELINUX
 		format = (option_mask32 & OPT_TERSE
-			? "%n %i %l %t %s %b %f %a %c %d\n"
+			? "%n %i %l %t %s %b %f %a %c %d"
 			: "  File: \"%n\"\n"
 			  "    ID: %-8i Namelen: %-7l Type: %T\n"
 			  "Block size: %-10s\n"
@@ -509,25 +504,26 @@ static bool do_statfs(const char *filename, const char *format)
 			  "Inodes: Total: %-10c Free: %d");
 # else
 		format = (option_mask32 & OPT_TERSE
-			? (option_mask32 & OPT_SELINUX ? "%n %i %l %t %s %b %f %a %c %d %C\n":
-			"%n %i %l %t %s %b %f %a %c %d\n")
-			: (option_mask32 & OPT_SELINUX ?
-			"  File: \"%n\"\n"
-			"    ID: %-8i Namelen: %-7l Type: %T\n"
-			"Block size: %-10s\n"
-			"Blocks: Total: %-10b Free: %-10f Available: %a\n"
-			"Inodes: Total: %-10c Free: %d"
-			"  S_context: %C\n":
-			"  File: \"%n\"\n"
-			"    ID: %-8i Namelen: %-7l Type: %T\n"
-			"Block size: %-10s\n"
-			"Blocks: Total: %-10b Free: %-10f Available: %a\n"
-			"Inodes: Total: %-10c Free: %d\n")
+			? (option_mask32 & OPT_SELINUX
+				? "%n %i %l %t %s %b %f %a %c %d %C"
+				: "%n %i %l %t %s %b %f %a %c %d")
+			: (option_mask32 & OPT_SELINUX
+				? "  File: \"%n\"\n"
+				"    ID: %-8i Namelen: %-7l Type: %T\n"
+				"Block size: %-10s\n"
+				"Blocks: Total: %-10b Free: %-10f Available: %a\n"
+				"Inodes: Total: %-10c Free: %d"
+				"  S_context: %C"
+				: "  File: \"%n\"\n"
+				"    ID: %-8i Namelen: %-7l Type: %T\n"
+				"Block size: %-10s\n"
+				"Blocks: Total: %-10b Free: %-10f Available: %a\n"
+				"Inodes: Total: %-10c Free: %d")
 			);
 # endif /* SELINUX */
 	}
 	print_it(format, filename, print_statfs, &statfsbuf IF_SELINUX(, scontext));
-#else /* FEATURE_STAT_FORMAT */
+#else /* !FEATURE_STAT_FORMAT */
 	format = (option_mask32 & OPT_TERSE
 		? "%s %llx %lu "
 		: "  File: \"%s\"\n"
@@ -624,14 +620,14 @@ static bool do_stat(const char *filename, const char *format)
 					"Device: %Dh/%dd\tInode: %-10i  Links: %-5h"
 					" Device type: %t,%T\n"
 					"Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n"
-					"Access: %x\n" "Modify: %y\n" "Change: %z\n";
+					"Access: %x\n" "Modify: %y\n" "Change: %z";
 			} else {
 				format =
 					"  File: %N\n"
 					"  Size: %-10s\tBlocks: %-10b IO Block: %-6o %F\n"
 					"Device: %Dh/%dd\tInode: %-10i  Links: %h\n"
 					"Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n"
-					"Access: %x\n" "Modify: %y\n" "Change: %z\n";
+					"Access: %x\n" "Modify: %y\n" "Change: %z";
 			}
 		}
 # else
@@ -650,14 +646,14 @@ static bool do_stat(const char *filename, const char *format)
 					" Device type: %t,%T\n"
 					"Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n"
 					"   S_Context: %C\n"
-					"Access: %x\n" "Modify: %y\n" "Change: %z\n"
+					"Access: %x\n" "Modify: %y\n" "Change: %z"
 					:
 					"  File: %N\n"
 					"  Size: %-10s\tBlocks: %-10b IO Block: %-6o %F\n"
 					"Device: %Dh/%dd\tInode: %-10i  Links: %-5h"
 					" Device type: %t,%T\n"
 					"Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n"
-					"Access: %x\n" "Modify: %y\n" "Change: %z\n"
+					"Access: %x\n" "Modify: %y\n" "Change: %z"
 					);
 			} else {
 				format = (option_mask32 & OPT_SELINUX ?
@@ -666,13 +662,13 @@ static bool do_stat(const char *filename, const char *format)
 					"Device: %Dh/%dd\tInode: %-10i  Links: %h\n"
 					"Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n"
 					"S_Context: %C\n"
-					"Access: %x\n" "Modify: %y\n" "Change: %z\n"
+					"Access: %x\n" "Modify: %y\n" "Change: %z"
 					:
 					"  File: %N\n"
 					"  Size: %-10s\tBlocks: %-10b IO Block: %-6o %F\n"
 					"Device: %Dh/%dd\tInode: %-10i  Links: %h\n"
 					"Access: (%04a/%10.10A)  Uid: (%5u/%8U)   Gid: (%5g/%8G)\n"
-					"Access: %x\n" "Modify: %y\n" "Change: %z\n"
+					"Access: %x\n" "Modify: %y\n" "Change: %z"
 					);
 			}
 		}
@@ -749,9 +745,9 @@ static bool do_stat(const char *filename, const char *format)
 		if (option_mask32 & OPT_SELINUX)
 			printf("   S_Context: %s\n", scontext);
 # endif
-		printf("Access: %s\n", human_time(statbuf.st_atime));
-		printf("Modify: %s\n", human_time(statbuf.st_mtime));
-		printf("Change: %s\n", human_time(statbuf.st_ctime));
+		printf("Access: %s\n", human_time(&statbuf.st_atim));
+		printf("Modify: %s\n", human_time(&statbuf.st_mtim));
+		printf("Change: %s\n", human_time(&statbuf.st_ctim));
 	}
 #endif  /* FEATURE_STAT_FORMAT */
 	return 1;

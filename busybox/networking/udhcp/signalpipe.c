@@ -28,7 +28,7 @@ static void signal_handler(int sig)
 	int sv = errno;
 	unsigned char ch = sig; /* use char, avoid dealing with partial writes */
 	if (write(WRITE_FD, &ch, 1) != 1)
-		bb_perror_msg("can't send signal");
+		bb_simple_perror_msg("can't send signal");
 	errno = sv;
 }
 
@@ -65,7 +65,7 @@ void FAST_FUNC udhcp_sp_setup(void)
 /* Quick little function to setup the pfds.
  * Limited in that you can only pass one extra fd.
  */
-void FAST_FUNC udhcp_sp_fd_set(struct pollfd pfds[2], int extra_fd)
+void FAST_FUNC udhcp_sp_fd_set(struct pollfd *pfds, int extra_fd)
 {
 	pfds[0].fd = READ_FD;
 	pfds[0].events = POLLIN;

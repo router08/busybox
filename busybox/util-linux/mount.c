@@ -20,7 +20,6 @@
 //config:config MOUNT
 //config:	bool "mount (23 kb)"
 //config:	default y
-//config:	select PLATFORM_LINUX
 //config:	help
 //config:	All files and filesystems in Unix are arranged into one big directory
 //config:	tree. The 'mount' utility is used to graft a filesystem onto a
@@ -183,14 +182,16 @@
 //usage:       "Returns 0 for success, number of failed mounts for -a, or errno for one mount."
 
 #include <mntent.h>
+#if ENABLE_FEATURE_SYSLOG
 #include <syslog.h>
+#endif
 #include <sys/mount.h>
 // Grab more as needed from util-linux's mount/mount_constants.h
 #ifndef MS_DIRSYNC
 # define MS_DIRSYNC     (1 << 7) // Directory modifications are synchronous
 #endif
-#ifndef MS_UNION
-# define MS_UNION       (1 << 8)
+#ifndef MS_NOSYMFOLLOW
+# define MS_NOSYMFOLLOW (1 << 8)
 #endif
 #ifndef MS_BIND
 # define MS_BIND        (1 << 12)
@@ -217,11 +218,15 @@
 #ifndef MS_SHARED
 # define MS_SHARED      (1 << 20)
 #endif
+
 #ifndef MS_RELATIME
 # define MS_RELATIME    (1 << 21)
 #endif
 #ifndef MS_STRICTATIME
 # define MS_STRICTATIME (1 << 24)
+#endif
+#ifndef MS_LAZYTIME
+# define MS_LAZYTIME    (1 << 25)
 #endif
 
 /* Any ~MS_FOO value has this bit set: */
@@ -324,7 +329,7 @@ enum {
 
 // Standard mount options (from -o options or --options),
 // with corresponding flags
-static const int32_t mount_options[] = {
+static const int32_t mount_options[] ALIGN4 = {
 	// MS_FLAGS set a bit.  ~MS_FLAGS disable that bit.  0 flags are NOPs.
 
 	IF_FEATURE_MOUNT_LOOP(
@@ -359,16 +364,19 @@ static const int32_t mount_options[] = {
 		/* "noatime"     */ MS_NOATIME,
 		/* "diratime"    */ ~MS_NODIRATIME,
 		/* "nodiratime"  */ MS_NODIRATIME,
-		/* "mand"        */ MS_MANDLOCK,
-		/* "nomand"      */ ~MS_MANDLOCK,
 		/* "relatime"    */ MS_RELATIME,
 		/* "norelatime"  */ ~MS_RELATIME,
 		/* "strictatime" */ MS_STRICTATIME,
-		/* "loud"        */ ~MS_SILENT,
-		/* "rbind"       */ MS_BIND|MS_RECURSIVE,
+		/* "nostrictatime"*/ ~MS_STRICTATIME,
+		/* "lazytime"    */ MS_LAZYTIME,
+		/* "nolazytime"  */ ~MS_LAZYTIME,
+		/* "nosymfollow" */ MS_NOSYMFOLLOW,
+		/* "mand"        */ MS_MANDLOCK,
+		/* "nomand"      */ ~MS_MANDLOCK,
+		/* "loud"      	 */ ~MS_SILENT,
 
 		// action flags
-		/* "union"       */ MS_UNION,
+		/* "rbind"       */ MS_BIND|MS_RECURSIVE,
 		/* "bind"        */ MS_BIND,
 		/* "move"        */ MS_MOVE,
 		/* "shared"      */ MS_SHARED,
@@ -405,29 +413,32 @@ static const char mount_option_str[] ALIGN1 =
 	)
 	IF_FEATURE_MOUNT_FLAGS(
 		// vfs flags
-		"nosuid\0"
-		"suid\0"
-		"dev\0"
-		"nodev\0"
-		"exec\0"
-		"noexec\0"
-		"sync\0"
-		"dirsync\0"
-		"async\0"
-		"atime\0"
-		"noatime\0"
-		"diratime\0"
-		"nodiratime\0"
-		"mand\0"
-		"nomand\0"
-		"relatime\0"
-		"norelatime\0"
-		"strictatime\0"
-		"loud\0"
-		"rbind\0"
+		"nosuid"       "\0"
+		"suid"         "\0"
+		"dev"          "\0"
+		"nodev"        "\0"
+		"exec"         "\0"
+		"noexec"       "\0"
+		"sync"         "\0"
+		"dirsync"      "\0"
+		"async"        "\0"
+		"atime"        "\0"
+		"noatime"      "\0"
+		"diratime"     "\0"
+		"nodiratime"   "\0"
+		"relatime"     "\0"
+		"norelatime"   "\0"
+		"strictatime"  "\0"
+		"nostrictatime""\0"
+		"lazytime"     "\0"
+		"nolazytime"   "\0"
+		"nosymfollow"  "\0"
+		"mand"         "\0"
+		"nomand"       "\0"
+		"loud"         "\0"
 
 		// action flags
-		"union\0"
+		"rbind\0"
 		"bind\0"
 		"move\0"
 		"make-shared\0"
@@ -483,7 +494,7 @@ static void FAST_FUNC update_mtab_entry_on_move(const struct mntent *mp)
 
 	mountTable = setmntent(bb_path_mtab_file, "r");
 	if (!mountTable) {
-		bb_perror_msg(bb_path_mtab_file);
+		bb_simple_perror_msg(bb_path_mtab_file);
 		return;
 	}
 
@@ -511,7 +522,7 @@ static void FAST_FUNC update_mtab_entry_on_move(const struct mntent *mp)
 		}
 		endmntent(mountTable);
 	} else if (errno != EROFS)
-		bb_perror_msg(bb_path_mtab_file);
+		bb_simple_perror_msg(bb_path_mtab_file);
 
 	if (ENABLE_FEATURE_CLEAN_UP) {
 		for (i = 0; i < count; i++) {
@@ -642,7 +653,7 @@ static unsigned long parse_mount_options(char *options, char **unrecognized)
 // Return a list of all block device backed filesystems
 static llist_t *get_block_backed_filesystems(void)
 {
-	static const char filesystems[2][sizeof("/proc/filesystems")] = {
+	static const char filesystems[2][sizeof("/proc/filesystems")] ALIGN1 = {
 		"/etc/filesystems",
 		"/proc/filesystems",
 	};
@@ -739,7 +750,7 @@ static int mount_it_now(struct mntent *mp, unsigned long vfsflags, char *filtero
 	// Abort entirely if permission denied.
 
 	if (rc && errno == EPERM)
-		bb_error_msg_and_die(bb_msg_perm_denied_are_you_root);
+		bb_simple_error_msg_and_die(bb_msg_perm_denied_are_you_root);
 
 	// If the mount was successful, and we're maintaining an old-style
 	// mtab file by hand, add the new entry to it now.
@@ -751,7 +762,7 @@ static int mount_it_now(struct mntent *mp, unsigned long vfsflags, char *filtero
 		int i;
 
 		if (!mountTable) {
-			bb_perror_msg(bb_path_mtab_file);
+			bb_simple_perror_msg(bb_path_mtab_file);
 			goto ret;
 		}
 
@@ -1231,6 +1242,7 @@ static NOINLINE int nfsmount(struct mntent *mp, unsigned long vfsflags, char *fi
 	 * then data pointer is interpreted as a string. */
 	struct nfs_mount_data data;
 	char *opt;
+	char *tokstate;
 	struct hostent *hp;
 	struct sockaddr_in server_addr;
 	struct sockaddr_in mount_server_addr;
@@ -1288,18 +1300,18 @@ static NOINLINE int nfsmount(struct mntent *mp, unsigned long vfsflags, char *fi
 	s = strchr(hostname, ',');
 	if (s) {
 		*s = '\0';
-		bb_error_msg("warning: multiple hostnames not supported");
+		bb_simple_error_msg("warning: multiple hostnames not supported");
 	}
 
 	server_addr.sin_family = AF_INET;
 	if (!inet_aton(hostname, &server_addr.sin_addr)) {
 		hp = gethostbyname(hostname);
 		if (hp == NULL) {
-			bb_herror_msg("%s", hostname);
+			bb_simple_herror_msg(hostname);
 			goto fail;
 		}
 		if (hp->h_length != (int)sizeof(struct in_addr)) {
-			bb_error_msg_and_die("only IPv4 is supported");
+			bb_simple_error_msg_and_die("only IPv4 is supported");
 		}
 		memcpy(&server_addr.sin_addr, hp->h_addr_list[0], sizeof(struct in_addr));
 	}
@@ -1349,7 +1361,7 @@ static NOINLINE int nfsmount(struct mntent *mp, unsigned long vfsflags, char *fi
 	nfsvers = 0;
 
 	/* parse options */
-	if (filteropts)	for (opt = strtok(filteropts, ","); opt; opt = strtok(NULL, ",")) {
+	if (filteropts)	for (opt = strtok_r(filteropts, ",", &tokstate); opt; opt = strtok_r(NULL, ",", &tokstate)) {
 		char *opteq = strchr(opt, '=');
 		if (opteq) {
 			int val, idx;
@@ -1389,7 +1401,7 @@ static NOINLINE int nfsmount(struct mntent *mp, unsigned long vfsflags, char *fi
 				else if (is_prefixed_with(opteq, "udp"))
 					tcp = 0;
 				else
-					bb_error_msg("warning: unrecognized proto= option");
+					bb_simple_error_msg("warning: unrecognized proto= option");
 				continue;
 			case 20: // "addr" - ignore
 				continue;
@@ -1522,7 +1534,7 @@ static NOINLINE int nfsmount(struct mntent *mp, unsigned long vfsflags, char *fi
 				if (nfs_mount_version >= 3)
 					nolock = !val;
 				else
-					bb_error_msg("warning: option nolock is not supported");
+					bb_simple_error_msg("warning: option nolock is not supported");
 				break;
 			case 11: //rdirplus
 				nordirplus = !val;
@@ -1590,11 +1602,11 @@ static NOINLINE int nfsmount(struct mntent *mp, unsigned long vfsflags, char *fi
 		} else {
 			hp = gethostbyname(mounthost);
 			if (hp == NULL) {
-				bb_herror_msg("%s", mounthost);
+				bb_simple_herror_msg(mounthost);
 				goto fail;
 			}
 			if (hp->h_length != (int)sizeof(struct in_addr)) {
-				bb_error_msg_and_die("only IPv4 is supported");
+				bb_simple_error_msg_and_die("only IPv4 is supported");
 			}
 			mount_server_addr.sin_family = AF_INET;
 			memcpy(&mount_server_addr.sin_addr, hp->h_addr_list[0], sizeof(struct in_addr));
@@ -1767,18 +1779,18 @@ static NOINLINE int nfsmount(struct mntent *mp, unsigned long vfsflags, char *fi
 	/* Create nfs socket for kernel */
 	if (tcp) {
 		if (nfs_mount_version < 3) {
-			bb_error_msg("NFS over TCP is not supported");
+			bb_simple_error_msg("NFS over TCP is not supported");
 			goto fail;
 		}
 		fsock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	} else
 		fsock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (fsock < 0) {
-		bb_perror_msg("nfs socket");
+		bb_simple_perror_msg("nfs socket");
 		goto fail;
 	}
 	if (bindresvport(fsock, 0) < 0) {
-		bb_perror_msg("nfs bindresvport");
+		bb_simple_perror_msg("nfs bindresvport");
 		goto fail;
 	}
 	if (port == 0) {
@@ -1886,6 +1898,58 @@ static int nfsmount(struct mntent *mp, unsigned long vfsflags, char *filteropts)
 }
 
 #endif // !ENABLE_FEATURE_MOUNT_NFS
+
+// Find "...,NAME=NUM,..." in the option string, remove "NAME=NUM" option
+// and return NUM.
+// Return 0 if not found.
+// All instances must be parsed and removed (for example, since kernel 5.4
+//      squashfs: Unknown parameter 'sizelimit'
+// will result if loopback mount option "sizelimit=NNN" is not removed
+// and squashfs sees it in option string).
+static unsigned long long cut_out_ull_opt(char *opts, const char *name_eq)
+{
+	unsigned long long ret = 0;
+
+	if (!opts) // allow NULL opts (simplifies callers' work)
+		return ret;
+
+	for (;;) {
+		char *end;
+		char *opt;
+
+		// Find comma-delimited "NAME="
+		for (;;) {
+			opt = strstr(opts, name_eq);
+			if (!opt)
+				return ret;
+			if (opt == opts)
+				break; // found it (it's first opt)
+			if (opt[-1] == ',') {
+				opts = opt - 1;
+				break; // found it (it's not a first opt)
+			}
+			// False positive like "VNAME=", we are at "N".
+			// - skip it, loop back to searching
+			opts = opt + 1;
+		}
+
+		ret = bb_strtoull(opt + strlen(name_eq), &end, 0);
+		if (errno && errno != EINVAL) {
+ err:
+			bb_error_msg_and_die("bad option '%s'", opt);
+		}
+		if (*end == '\0') {
+			// It is "[,]NAME=NUM\0" - truncate it and return
+			*opts = '\0';
+			return ret;
+		}
+		if (*end != ',')
+			goto err;
+		// We are at trailing comma
+		// Remove "NAME=NUM," and loop back to check for duplicate opts
+		overlapping_strcpy(opt, end + 1);
+	}
+}
 
 // Mount one directory.  Handles CIFS, NFS, loopback, autobind, and filesystem
 // type detection.  Returns 0 for success, nonzero for failure.
@@ -2012,13 +2076,18 @@ static int singlemount(struct mntent *mp, int ignore_busy)
 	}
 
 	// Might this be an NFS filesystem?
-	if ((!mp->mnt_type || is_prefixed_with(mp->mnt_type, "nfs"))
-	 && strchr(mp->mnt_fsname, ':') != NULL
+	if (!(vfsflags & (MS_BIND | MS_MOVE))
+	 && (!mp->mnt_type || is_prefixed_with(mp->mnt_type, "nfs"))
 	) {
-		if (!mp->mnt_type)
-			mp->mnt_type = (char*)"nfs";
-		rc = nfsmount(mp, vfsflags, filteropts);
-		goto report_error;
+		char *colon = strchr(mp->mnt_fsname, ':');
+		if (colon // looks like "hostname:..."
+		 && strchrnul(mp->mnt_fsname, '/') > colon // "hostname:" has no slashes
+		) {
+			if (!mp->mnt_type)
+				mp->mnt_type = (char*)"nfs";
+			rc = nfsmount(mp, vfsflags, filteropts);
+			goto report_error;
+		}
 	}
 
 	// Look at the file.  (Not found isn't a failure for remount, or for
@@ -2030,8 +2099,15 @@ static int singlemount(struct mntent *mp, int ignore_busy)
 	) {
 		// Do we need to allocate a loopback device for it?
 		if (ENABLE_FEATURE_MOUNT_LOOP && S_ISREG(st.st_mode)) {
+			unsigned long long offset;
+			unsigned long long sizelimit;
+
 			loopFile = bb_simplify_path(mp->mnt_fsname);
 			mp->mnt_fsname = NULL; // will receive malloced loop dev name
+
+			// Parse and remove loopback options
+			offset = cut_out_ull_opt(filteropts, "offset=");
+			sizelimit = cut_out_ull_opt(filteropts, "sizelimit=");
 
 			// mount always creates AUTOCLEARed loopdevs, so that umounting
 			// drops them without any code in the userspace.
@@ -2041,16 +2117,17 @@ static int singlemount(struct mntent *mp, int ignore_busy)
 			// Subject: Allow auto-destruction of loop devices
 			loopfd = set_loop(&mp->mnt_fsname,
 					loopFile,
-					0,
+					offset,
+					sizelimit,
 					((vfsflags & MS_RDONLY) ? BB_LO_FLAGS_READ_ONLY : 0)
 						| BB_LO_FLAGS_AUTOCLEAR
 			);
 			if (loopfd < 0) {
 				if (errno == EPERM || errno == EACCES)
-					bb_error_msg(bb_msg_perm_denied_are_you_root);
+					bb_simple_error_msg(bb_msg_perm_denied_are_you_root);
 				else
-					bb_perror_msg("can't setup loop device");
-				return errno;
+					bb_simple_perror_msg("can't setup loop device");
+				return loopfd; // was "return errno", but it can be 0 here
 			}
 
 		// Autodetect bind mounts
@@ -2255,7 +2332,7 @@ int mount_main(int argc UNUSED_PARAM, char **argv)
 		// argument when we get it.
 		if (argv[1]) {
 			if (nonroot)
-				bb_error_msg_and_die(bb_msg_you_must_be_root);
+				bb_simple_error_msg_and_die(bb_msg_you_must_be_root);
 			mtpair->mnt_fsname = argv[0];
 			mtpair->mnt_dir = argv[1];
 			mtpair->mnt_type = fstype;
@@ -2272,7 +2349,7 @@ int mount_main(int argc UNUSED_PARAM, char **argv)
 
 	cmdopt_flags = parse_mount_options(cmdopts, NULL);
 	if (nonroot && (cmdopt_flags & ~MS_SILENT)) // Non-root users cannot specify flags
-		bb_error_msg_and_die(bb_msg_you_must_be_root);
+		bb_simple_error_msg_and_die(bb_msg_you_must_be_root);
 
 	// If we have a shared subtree flag, don't worry about fstab or mtab.
 	if (ENABLE_FEATURE_MOUNT_FLAGS
@@ -2337,7 +2414,7 @@ int mount_main(int argc UNUSED_PARAM, char **argv)
 			// No, mount -a won't mount anything,
 			// even user mounts, for mere humans
 			if (nonroot)
-				bb_error_msg_and_die(bb_msg_you_must_be_root);
+				bb_simple_error_msg_and_die(bb_msg_you_must_be_root);
 
 			// Does type match? (NULL matches always)
 			if (!fstype_matches(mtcur->mnt_type, fstype))
@@ -2417,7 +2494,7 @@ int mount_main(int argc UNUSED_PARAM, char **argv)
 			// fstab must have "users" or "user"
 			l = parse_mount_options(mtcur->mnt_opts, NULL);
 			if (!(l & MOUNT_USERS))
-				bb_error_msg_and_die(bb_msg_you_must_be_root);
+				bb_simple_error_msg_and_die(bb_msg_you_must_be_root);
 		}
 
 		//util-linux-2.12 does not do this check.

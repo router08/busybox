@@ -712,7 +712,7 @@ static NOINLINE void display_process_list(int lines_rem, int scr_width)
 		);
 		if ((int)(scr_width - col) > 1)
 			read_cmdline(line_buf + col, scr_width - col, s->pid, s->comm);
-		fputs(line_buf, stdout);
+		fputs_stdout(line_buf);
 		/* printf(" %d/%d %lld/%lld", s->pcpu, total_pcpu,
 			cur_jif.busy - prev_jif.busy, cur_jif.total - prev_jif.total); */
 		s++;
@@ -979,6 +979,11 @@ static unsigned handle_input(unsigned scan_mask, duration_t interval)
 		IF_FEATURE_TOPMEM(&& scan_mask != TOPMEM_MASK)
 		) {
 			scan_mask ^= PSSCAN_TASKS;
+#  if ENABLE_FEATURE_TOP_CPU_USAGE_PERCENTAGE
+			free(prev_hist);
+			prev_hist = NULL;
+			prev_hist_count = 0;
+#   endif
 			continue;
 		}
 # endif
@@ -1000,10 +1005,10 @@ static unsigned handle_input(unsigned scan_mask, duration_t interval)
 #  if ENABLE_FEATURE_TOPMEM
 		if (c == 's') {
 			scan_mask = TOPMEM_MASK;
+			sort_field = (sort_field + 1) % NUM_SORT_FIELD;
 			free(prev_hist);
 			prev_hist = NULL;
 			prev_hist_count = 0;
-			sort_field = (sort_field + 1) % NUM_SORT_FIELD;
 			continue;
 		}
 #  endif
@@ -1047,9 +1052,9 @@ static unsigned handle_input(unsigned scan_mask, duration_t interval)
 //usage:       "[-b"IF_FEATURE_TOPMEM("m")IF_FEATURE_SHOW_THREADS("H")"]"
 //usage:       " [-n COUNT] [-d SECONDS]"
 //usage:#define top_full_usage "\n\n"
-//usage:       "Provide a view of process activity in real time."
+//usage:       "Show a view of process activity in real time."
 //usage:   "\n""Read the status of all processes from /proc each SECONDS"
-//usage:   "\n""and display a screenful of them."
+//usage:   "\n""and show a screenful of them."
 //usage:   "\n"
 //usage:	IF_FEATURE_TOP_INTERACTIVE(
 //usage:       "Keys:"
@@ -1229,7 +1234,7 @@ int top_main(int argc UNUSED_PARAM, char **argv)
 #endif
 		} /* end of "while we read /proc" */
 		if (ntop == 0) {
-			bb_error_msg("no process info in /proc");
+			bb_simple_error_msg("no process info in /proc");
 			break;
 		}
 

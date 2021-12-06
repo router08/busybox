@@ -63,7 +63,7 @@
 //kbuild:lib-$(CONFIG_CROND) += crond.o
 
 //usage:#define crond_trivial_usage
-//usage:       "-fbS -l N " IF_FEATURE_CROND_D("-d N ") "-L LOGFILE -c DIR"
+//usage:       "[-fbS] [-l N] " IF_FEATURE_CROND_D("[-d N] ") "[-L LOGFILE] [-c DIR]"
 //usage:#define crond_full_usage "\n\n"
 //usage:       "	-f	Foreground"
 //usage:     "\n	-b	Background (default)"
@@ -492,7 +492,7 @@ static void load_crontab(const char *fileName)
 					const char *name;
 					const char tokens[8];
 				} SpecialEntry;
-				static const SpecialEntry SpecAry[] = {
+				static const SpecialEntry SpecAry[] ALIGN8 = {
 					/*              hour  day   month weekday */
 					{ "yearly",     "0\0" "1\0" "1\0" "*" },
 					{ "annually",   "0\0" "1\0" "1\0" "*" },
@@ -731,7 +731,7 @@ fork_job(const char *user, int mailFd, CronLine *line, bool run_sendmail)
 	logmode = sv_logmode;
 
 	if (pid < 0) {
-		bb_perror_msg("vfork");
+		bb_simple_perror_msg("vfork");
  err:
 		pid = 0;
 	} /* else: PARENT, FORK SUCCESS */
@@ -861,7 +861,7 @@ static pid_t start_one_job(const char *user, CronLine *line)
 		bb_error_msg_and_die("can't execute '%s' for user %s", shell, user);
 	}
 	if (pid < 0) {
-		bb_perror_msg("vfork");
+		bb_simple_perror_msg("vfork");
  err:
 		pid = 0;
 	}

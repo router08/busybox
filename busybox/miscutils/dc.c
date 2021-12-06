@@ -39,14 +39,14 @@ static unsigned check_under(void)
 {
 	unsigned p = pointer;
 	if (p == 0)
-		bb_error_msg_and_die("stack underflow");
+		bb_simple_error_msg_and_die("stack underflow");
 	return p - 1;
 }
 
 static void push(double a)
 {
 	if (pointer >= STACK_SIZE)
-		bb_error_msg_and_die("stack overflow");
+		bb_simple_error_msg_and_die("stack overflow");
 	stack[pointer++] = a;
 }
 
@@ -100,7 +100,7 @@ static void mod(void)
 	 * 0
 	 */
 	if (d == 0) {
-		bb_error_msg("remainder by zero");
+		bb_simple_error_msg("remainder by zero");
 		pop();
 		push(0);
 		return;
@@ -195,7 +195,7 @@ struct op {
 	void (*function) (void);
 };
 
-static const struct op operators[] = {
+static const struct op operators[] ALIGN_PTR = {
 #if ENABLE_FEATURE_DC_LIBM
 	{"^",   power},
 //	{"exp", power},
@@ -229,6 +229,7 @@ static void stack_machine(const char *argument)
 	const struct op *o;
 
  next:
+//TODO: needs setlocale(LC_NUMERIC, "C")?
 	number = strtod(argument, &end);
 	if (end != argument) {
 		argument = end;
